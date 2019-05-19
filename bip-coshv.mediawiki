@@ -73,7 +73,8 @@ normal transactions and batched transactions.
 <img src="bip-coshv/states.png" align="middle"></img>
 
 A simulation is shown below of what impact this could have on mempool backlog
-given 5% network adoption, and 50% network adoption.
+given 5% network adoption, and 50% network adoption. The code for the simulation
+is provided in this BIP's subdirectory.
 
 <img src="bip-coshv/five.png" align="middle"></img>
 <img src="bip-coshv/fifty.png" align="middle"></img>
