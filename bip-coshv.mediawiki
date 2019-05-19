@@ -67,6 +67,11 @@ additional transaction, and 2N from the perspective of the network. However,
 given the lack of signatures required for such transactions, the actual overhead
 is less.
 
+The below chart showcases the structure of these transactions in comparison to
+normal transactions and batched transactions.
+
+<img src="bip-coshv/states.png" align="middle"></img>
+
 A simulation is shown below of what impact this could have on mempool backlog
 given 5% network adoption, and 50% network adoption.
 
