@@ -13,6 +13,10 @@
 This BIP proposes a new opcode, OP_CHECKOUTPUTSHASHVERIFY, to be activated
 for Tapscript version 0.
 
+The new opcode has applications for transaction congestion control and payment
+channel instantiation, among others, which are described in the Motivation
+section of this BIP.
+
 ==Summary==
 
 CHECKOUTPUTSHASHVERIFY uses opcode OP_RESERVED1 (0x89) during Tapscript execution.
@@ -96,7 +100,7 @@ When greater security is required for cold storage solutions, there can be
 default Tapscript paths that move funds from one target to another target.
 
 For example, a cold wallet can be set up where one customer support desk can,
-without further authroization, move a portion of the funds (using multiple
+without further authorization, move a portion of the funds (using multiple
 pre-set amounts) into a lukewarm wallet operated by an isolated support desk.
 The support desk can then issue some funds to a hot wallet, and send the
 remainder back to cold storage with a similar withdrawal mechanism in place.
@@ -120,7 +124,6 @@ Then, the transaction can be confirmed.
 
 If desired, the Tapscript path can be usurped by a signature based spend to
 improve fungibility.
-
 
 ==Design==
 
@@ -172,6 +175,63 @@ additional verification overhead.
 It is not a concern that exposing this hash on the stack might allow parsing of
 the outputs, because they are already known exactly at the time of script
 construction.
+
+===Design Tradeoffs and Risks===
+
+Covenants have historically been controversial given their potential for
+fungibility risks -- coins could be minted which have a permanent restriction on
+how they may or may not be spent.
+
+In the approach presented here, the covenants are severely restricted as
+follows. All covenants are wrapped with a multisig based key which can preempt
+the covenant's requirements.  Furthermore, the structure of
+OP_CHECKOUTPUTSHASHVERIFY covenants is such that the outputs must be known
+exactly at the time of construction. Therefore it is only possible to create
+covenants which expand in a finite number of steps and is equivalent to, in a
+safety sense, to the set of transactions which create all the inputs at
+reachable end states. Furthermore, covenants are restricted to be spendable as a
+single input only, preventing the 'half spend' problem.
+
+
+These covenants, as restricted as they are, bear some risks.  It is possible
+that the the preimage provided to OP_CHECKOUTPUTSHASHVERIFY is unknown or the
+Taproot is constructed with an public key with an unknown private key. Knowing
+that an address is spendable from is incompatible with sender's ability to
+spend to any address (especially, OP_RETURN). If a sender needs to know the
+recipient can remove the covenant before spending, they may request a signature
+of an challenge string from the recipients.  A final risk is the abuse of
+"forwarding address contracts". A forwarding address is a script which can
+automatically execute in a predefined way. For example, a hot wallet might have
+coins which can automatically be moved to a cold storage address after a
+relative timeout. The issue is that reusing such keys can be very unsafe. For
+example, suppose one creates an address which forwards 1 BTC to cold storage.
+Creating an output to this address with less than 1 BTC will be frozen until
+the Taproot signature path is used. If more than 1 BTC is paid to the address,
+and the redeemscript is known publicly, then anyone can cause the funds in
+excess of 1BTC to be paid as a large miner fee. It's possible to later introduce
+opcodes which commit to how much fee should be spent at max or other
+restrictions that would make reusable keys
+safer to use. For now, it is best to not reuse a Taproot key unless you are
+certain all the branches are compatible with your desired payment. This
+limitation and risk is not unique to OP_CHECKOUTPUTSHASHVERIFY, Taproot scripts
+may contain many logical branches that would be unsafe for being spent to
+multiple times (e.g., a Hash Time Lock branch should be instantiated with unique
+hashes each time it is used).
+
+More powerful covenants like those proposed by MES16, if ever implemented, would
+make the OP_CHECKOUTPUTSHASHVERIFY type of covenant superfluous. They would also
+bring some benefits in terms of improving the ability to adjust for things like
+fees rather than relying on child-pays-for-parent or other mechanisms. However,
+these features come at substantially increased complexity and room for
+unintended behavior.  Alternatively, CHECKSIGFROMSTACK or SIGHASH_NOINPUT based
+covenant designs might be able to implement covenants as well. SIGHASH_NOINPUT
+bears additional risks that preclude it's viability for inclusion in Bitcoin.
+CHECKSIGFROMSTACK is more complicated to use that OP_CHECKOUTPUTSHASHVERIFY, and
+encumbers additional verification overhead absent from
+OP_CHECKOUTPUTSHASHVERIFY.  Given the simplicity of this approach to implement
+and analyze, and the benefits realizable by user applications, the
+OP_CHECKOUTPUTSHASHVERIFY approach is proposed.
+
 
 
 ==Specification==
