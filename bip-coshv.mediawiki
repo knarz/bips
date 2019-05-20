@@ -70,7 +70,7 @@ is less.
 The below chart showcases the structure of these transactions in comparison to
 normal transactions and batched transactions.
 
-<img src="bip-coshv/states.png" align="middle"></img>
+<img src="bip-coshv/states.svg" align="middle"></img>
 
 A simulation is shown below of what impact this could have on mempool backlog
 given 5% network adoption, and 50% network adoption. The code for the simulation
