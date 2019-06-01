@@ -5,11 +5,13 @@ PHASES = 15
 PHASE_LENGTH = 144
 SAMPLES = PHASE_LENGTH * PHASES
 AVG_TX = 235
+COMPRESSED_NODE_SIZE = 4 + 1 + 1 + 4 + 32 + 4 + 4 + 8 + 8 + 34 + 34 + 33 + 32 + 34
+print(COMPRESSED_NODE_SIZE)
 MAX_BLOCK_SIZE = 1e6
 AVG_INTERVAL = 10*60
 TXNS_PER_SEC = 0.5*MAX_BLOCK_SIZE/AVG_TX/AVG_INTERVAL
 MAX_MEMPOOL = MAX_BLOCK_SIZE * 100
-COMPRESSABLE = 0.050
+COMPRESSABLE = 0.50
 
 
 
@@ -57,7 +59,7 @@ def compressed(rate_multiplier = 1):
             txns = np.random.poisson(rate_multiplier*get_rate(phase)*block_time)
             postponed = txns * COMPRESSABLE
             weight = (txns-postponed)*AVG_TX + backlog
-            secondary_backlog += postponed*AVG_TX * 2 # Total extra work
+            secondary_backlog += postponed*133 + postponed*34 # Total extra work
             if weight > MAX_BLOCK_SIZE:
                 results_confirmed[i] += MAX_BLOCK_SIZE - AVG_TX
                 backlog = weight - MAX_BLOCK_SIZE

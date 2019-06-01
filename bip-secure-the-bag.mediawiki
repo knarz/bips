@@ -1,0 +1,390 @@
+<pre>
+  BIP: bip-secure-the-bag
+  Title: OP_SECURETHEBAG
+  Author: Jeremy Rubin <j@rubin.io>
+  Status: Draft
+  Type: Standards Track
+  Created:
+  License: BSD-3-Clause
+</pre>
+
+==Abstract==
+
+This BIP proposes a new opcode, OP_SECURETHEBAG, to be activated
+for Tapscript version 0.
+
+The new opcode has applications for transaction congestion control and payment
+channel instantiation, among others, which are described in the Motivation
+section of this BIP.
+
+==Summary==
+
+OP_SECURETHEBAG uses opcode OP_RESERVED1 (0x89) during Tapscript execution.
+
+OP_SECURETHEBAG verifies the following conditions:
+
+* The following script is a minimal data push of 32 bytes
+* The SHA256 TaggedHash("BagHash") of the serialized version, locktime, number of inputs, and outputs matches the value provided
+
+If the operations following OP_SECURETHEBAG are not a 32-byte data push,
+it is ignored. Otherwise, if hash is not equal to the hash provided, execution fails.
+
+==Motivation==
+
+Covenants -- or restrictions on how a coin may be spent beyond key ownership --
+are a highly powerful construct for structuring smart contracts. However, given
+their complexity and potential for introducing fungibility risks they have not
+been seriously considered for inclusion in Bitcoin thus far.
+
+This BIP aims to introduce a simple covenant which enables a limited set
+of highly valuable use cases without significant risk. For example:
+
+===Congestion Controlled Transactions===
+
+When there is a high demand for blockspace it becomes very expensive to make
+transactions. By using OP_SECURETHEBAG, a large volume payment processor may
+aggregate all their payments into a single O(1) transaction for purposes of
+confirmation. Then, some time later, the payments can be expanded out of that
+UTXO when the demand for blockspace is decreased.
+
+Without OP_SECURETHEBAG, this is still possible to do with Schnorr signatures
+(even with ECDSA given multiparty schemes). However, it is not possible to do
+non-interactively, which fundamentally limits the viability of the approach as
+interacting to collect signatures from all recipients may be difficult or slow.
+
+The sender of a congestion controlled transaction can choose from many different
+transaction structures.
+
+The simplest option is a single committed transaction which expands from 1
+output to N. Even this simple use case is highly useful because the expansion
+can wait till cheap block space is available.
+
+As the number of recipients grows, a sender can commit to a tree of outputs
+using OP_SECURETHEBAG. The tree permits them to confirm as many payments as they
+like (i.e., even more than can fit into a block). Such a technique starts to
+make sense when N*size_of(Output) > log(N)*size_of(OP_SECURETHEBAG Txn) +
+size_of(Output). Assuming straightforward transaction sizes, this is around 10
+recipients.
+
+Furthermore, the Taproot can commit to variable size expansions -- say, one node
+which expands by 2, by 4, by 8, etc. This allows a trade off between transaction
+overhead and immediately available block space.  The Merkle tree lookup in that
+case is O(log(log(N))) extra overhead, but the tree can be Huffman encoded to
+make it E[O(1)] depending on block demand.
+
+Each node of the tree can also attempt to 'opt in' to preferring a Taproot
+signature based spend, but if participants are offline or malicious the
+expansion can proceed to smaller groups.
+
+The overall overhead of the tree approach (without optimizations) is from the
+perspective of each user O(log(N)) transactions with an expectation of just 1
+additional transaction, and 2N from the perspective of the network. However,
+given the lack of signatures required for such transactions, the actual overhead
+is less.
+
+The below chart showcases the structure of these transactions in comparison to
+normal transactions and batched transactions.
+
+<img src="bip-secure-the-bag/states.svg" align="middle"></img>
+
+A simulation is shown below of what impact this could have on mempool backlog
+given 5% network adoption, and 50% network adoption. The code for the simulation
+is provided in this BIP's subdirectory.
+
+<img src="bip-secure-the-bag/five.png" align="middle"></img>
+<img src="bip-secure-the-bag/fifty.png" align="middle"></img>
+
+===Channel Factories===
+
+Using OP_SECURETHEBAG for Channel Factories is similar to the use for Congestion
+Control, except the leaf nodes should be set up as a channels instead of plain
+payments. The channel can be between the sender and recipient or a target of
+recipient's choice. Using an OP_SECURETHEBAG Taproot, the recipient may even
+give the sender an address which makes a channel unbeknownst to them.
+
+These channels are already time insensitive for setup, as all punishments can be
+relative timelocked to the actual instantiation.
+
+This permits instant liquidity on the coins sent using this delayed method.
+
+===Wallet Vaults===
+
+When greater security is required for cold storage solutions, there can be
+default Tapscript paths that move funds from one target to another target.
+
+For example, a cold wallet can be set up where one customer support desk can,
+without further authorization, move a portion of the funds (using multiple
+pre-set amounts) into a lukewarm wallet operated by an isolated support desk.
+The support desk can then issue some funds to a hot wallet, and send the
+remainder back to cold storage with a similar withdrawal mechanism in place.
+
+This is all possible without OP_SECURETHEBAG, but OP_SECURETHEBAG
+eliminates the need for coordination and online signers, as well as reducing the
+ability for a support desk to improperly move funds.
+
+Furthermore, all such designs can be combined with relative time locks to give
+time for compliance and risk desks to intervene.
+
+
+===CoinJoin===
+
+OP_SECURETHEBAG makes it much easier to set up a trustless CoinJoin.
+
+All participants agree on a single UTXO which commits to its output hash,
+participants then can fund the transaction with whatever inputs they like.
+
+Then, the transaction can be confirmed.
+
+If desired, the Tapscript path can be usurped by a signature based spend to
+improve fungibility.
+
+==Design==
+
+The goal of OP_SECURETHEBAG is to be minimal impact on the existing codebase --
+in the future, as we become aware of more complex but shown to be safe use cases
+new covenant types might be enabled.
+
+Critically, because OP_SECURETHEBAG is a Tapscript opcode, it is intended that
+participants may collaborate to replace the Tapscript path with a signature.
+This lifts the requirement of the output being spent alone and the exact match
+of output hashes, if other participant dependencies (like channel state) can be
+updated.
+
+Below we'll discuss the rules one-by-one:
+
+
+====The following script is a minimal data push of 32 bytes====
+
+OP_SECURETHEBAG uses the push after the opcode rather than before the opcode.
+Were OP_SECURETHEBAG to use the data from the stack it would be possible to
+construct in script what data is committed to. By using a data lookahead, we
+ensure that the outputs are known at the time of spending.  Minimalism is
+partially why OP_SECURETHEBAG uses a PushData32 (0x20) rather than a
+literal/immediate value; it is messy to upgrade the parser to treat old opcodes
+as multi-byte opcodes. This can be done, depending on community feedback and
+preference. It is left out of this proposal for now.
+
+
+The script programmer is still able to conditionalize which hash it is checked
+on, e.g., <code>OP_IF OP_SECURETHEBAG <outputs 1> OP_ELSE <outputs 2>
+OP_ENDIF</code>. However, by keeping the outputs literal hashes we limit the
+possibilities.
+
+In any case, a user is more likely to, given Tapscript's API, compile any code
+with multiple <code>OP_SECURETHEBAG</code> operations into separate branches.
+
+
+====The SHA256 TaggedHash("BagHash") of the serialized version, locktime, number of inputs, and outputs matches the value provided====
+
+
+The set of data committed to is the set of data which can impact the TXID of the
+transaction, other than the inputs. This ensures that for a given known input,
+the TXIDs can also be known ahead of time as long as the inputs are SegWit.
+Otherwise, OP_SECURETHEBAG would not be usable for Channel Factories as the
+redemtion TXID could be malleated.
+
+It is not a concern that exposing this hash on the stack might allow parsing of
+the data hashed, because they are already known exactly at the time of script
+construction.
+
+=====Committing to the version and locktime=====
+
+Were these values not committed, it would be possible to delay the spending of
+an output arbitrarily as well as possible to change the TXID.
+
+Committing these values, rather than restricting them to specific values, is
+more flexible as it permits users of OP_SECURETHEBAG the set the version and
+locktime as they please.
+
+=====Committing to the number of inputs=====
+
+If we allow more than one input to be spent in the transaction then it would be
+possible for two outputs to request payment to the same set of outputs,
+resulting in half the intended payments being discarded 
+
+Furthermore, the restriction on which inputs can be co-spent is critical for
+payments-channel constructs where a stable TXID is a requirement (updates would
+need to be signed on all combinations of inputs).
+
+However, there are legitimate use cases for allowing multiple inputs. For
+example:
+
+Tapscript paths: 
+
+    Path A: <+24 hours> OP_CHECKSEQUENCEVERIFY OP_SECURETHEBAG <Pay Alice 1 Bitcoin (1 input) nLockTime for +24 hours>
+    Path B: OP_SECURETHEBAG <Pay Bob 2 Bitcoin (2 inputs)>
+
+In this case, there are 24 hours for the output to, with the addition of a
+second output, pay Bob 2 BTC. If 24 hours lapses, then Alice may redeem her 1
+BTC from the contract. Both UTXOs may have the exact same Path B, or only one.
+
+The issue with these constructs is that there are N! orders that the inputs can
+be ordered in and it's not generally possible to restrict the ordering.
+
+OP_SECURETHEBAG allows for users to guarantee the exact number of inputs being
+spent. In general, using OP_SECURETHEBAG with more than one input is difficult
+and exposes subtle issues, so multiple inputs should not be used except in
+specific applications.
+
+===Design Tradeoffs and Risks===
+
+Covenants have historically been controversial given their potential for
+fungibility risks -- coins could be minted which have a permanent restriction on
+how they may or may not be spent.
+
+In the approach presented here, the covenants are severely restricted as
+follows. All covenants are wrapped with a multisig based key which can preempt
+the covenant's requirements.  Furthermore, the structure of OP_SECURETHEBAG
+covenants is such that the outputs must be known exactly at the time of
+construction. Therefore it is only possible to create covenants which expand in
+a finite number of steps and is equivalent to, in a safety sense, to the set of
+transactions which create all the inputs at reachable end states. Furthermore,
+covenants are restricted to be spendable as a known number of inputs only,
+preventing the 'half spend' problem.
+
+
+These covenants, as restricted as they are, bear some risks.  
+
+The preimage paired with OP_SECURETHEBAG may be unknown or the Taproot may be
+constructed with an public key with an unknown private key. Knowing that an
+address is spendable from is incompatible with sender's ability to spend to any
+address (especially, OP_RETURN). If a sender needs to know the recipient could
+remove the covenant before spending, they may request a signature of an
+challenge string from the recipients.
+
+Key-reuse with OP_SECURETHEBAG may be abused as a form of "forwarding address
+contracts". A forwarding address is a script which can automatically execute in
+a predefined way. For example, a hot wallet might have coins which can
+automatically be moved to a cold storage address after a relative timeout.  The
+issue is that reusing such keys can be very unsafe. For example, suppose one
+creates an address which forwards 1 BTC to cold storage.  Creating an output to
+this address with less than 1 BTC will be frozen until the Taproot signature
+path is used. If more than 1 BTC is paid to the address, and the redeemscript is
+known publicly, then anyone can cause the funds in excess of 1BTC to be paid as
+a large miner fee. OP_SECURETHEBAG could commit to the exact amount of bitcoin
+provided by the inputs/amount of fee paid, but as this is a user error and not a
+malleability issue this is not done.  Further, it's possible to later introduce
+opcodes which commit to how much fee should be spent at max or other
+restrictions that would make reusable keys safer to use.
+
+For now, it is best to not reuse a Taproot key unless you are
+certain all the branches are compatible with your desired payment. This
+limitation and risk is not unique to OP_SECURETHEBAG, Taproot scripts
+may contain many logical branches that would be unsafe for being spent to
+multiple times (e.g., a Hash Time Lock branch should be instantiated with unique
+hashes each time it is used).
+
+OP_SECURETHEBAG is substantially less risky than other covenant systems. If ever
+implemented, other covenant systems could make the OP_SECURETHEBAG's
+functionality redundant. However, given OP_SECURETHEBAG's simple semantics and
+low on chain cost it's likely that it would continue to be used.
+
+More powerful covenants like those proposed by MES16, would also
+bring some benefits in terms of improving the ability to adjust for things like
+fees rather than relying on child-pays-for-parent or other mechanisms. However,
+these features come at substantially increased complexity and room for
+unintended behavior.
+
+Alternatively, CHECKSIGFROMSTACK or SIGHASH_NOINPUT based covenant designs might
+be able to implement covenants as well. SIGHASH_NOINPUT bears additional risks
+that preclude it's viability for inclusion in Bitcoin.  CHECKSIGFROMSTACK is
+more complicated to use that OP_SECURETHEBAG, and encumbers additional
+verification overhead absent from OP_SECURETHEBAG. It's potential recursion
+issues also make it more difficult to advocate for inclusion in Bitcoin.
+
+
+Given the simplicity of this approach to implement and analyze, and the benefits
+realizable by user applications, the OP_SECURETHEBAG approach is proposed in
+lieu of more complete covenants.
+
+====Note on Similar Alternatives====
+An earlier version of OP_SECURETHEBAG, OP_CHECKOUTPUTSHASHVERIFY, is withdrawn
+in favor of OP_SECURETHEBAG. OP_CHECKOUTPUTSHASHVERIFY did not commit to the
+version or lock time and was thus insecure.
+
+It would also be possible to implement OP_SECURETHEBAG as a template tapscript
+program. This would roughly entail to transforming the script
+<code>OP_SECURETHEBAG</code> into <code>OP_SECURETHEBAG <hash of version,
+locktime, number of inputs, outputs> </code> before looking it up in the Taproot
+Merkle Tree. This approach could save 34 bytes per transaction compared to using
+OP_SECURETHEBAG (which may be a whole tree of transactions). However, such a
+template approach requires changes to Taproot, so can be considered as a
+possibility, but is not proposed concretely here so as not to slow down Taproot
+deployment with bikeshedding the templating system. An example implementation of
+this approach is provided [[https://github.com/JeremyRubin/bitcoin/tree/taproot-with-builtin-templates|here]]
+nonetheless.  Such an efficient templating technique can be deployed in a future
+SegWit Taproot version.
+
+
+
+==Specification==
+The below code is the main logic for verifying <code>OP_SECURETHEBAG</code>.
+
+
+    case OP_SECURETHEBAG:
+    {
+        // Don't verify before enabled...
+        if (flags & SCRIPT_VERIFY_BAG_SECURED) {
+            CScript::const_iterator lookahead = pc;
+            opcodetype argument;
+            // Read ahead one opcode as a lookahead argument
+            if (!script.GetOp(lookahead, argument, vchPushValue))
+                return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+            // If lookahead argument was exactly 32 bytes, check OutputHash
+            // This is so that we can later add different semantics for this opcode
+            if (vchPushValue.size() == 32) {
+                // Argument should be == 0x20 -- will fail later anyways
+                if (!CheckMinimalPush(vchPushValue, argument)) {
+                    return set_error(serror, SCRIPT_ERR_MINIMALDATA);
+                }
+                // Lastly, check that the outputs hash matches the passed value
+                if (!checker.CheckBagSecured(vchPushValue)) {
+                    return set_error(serror, SCRIPT_ERR_BAG_NOT_SECURED);
+                }
+            }
+        }
+    }
+    break;
+
+The hash is computed as follows:
+
+    static const CHashWriter BagHash = TaggedHash("BagHash");
+    template<typename TxType>
+    uint256 GetSecuredBagHash(const TxType& tx) {
+        return (CHashWriter(BagHash)
+        << tx.nVersion
+        << tx.nLockTime
+        << uint64_t(tx.vin.size())
+        << tx.vout
+        ).GetSHA256();
+    }
+
+
+
+==Deployment==
+
+The deployment is intended to be done with Tapscript
+https://github.com/sipa/bips/blob/bip-schnorr/bip-tapscript.mediawiki.
+
+The deployment schedule can either be at the same time as Tapscript, or some
+time later.
+
+
+
+==Implementations==
+
+An implementation and tests are available here:
+https://github.com/JeremyRubin/bitcoin/tree/secure_the_bag.
+
+
+== References ==
+
+*[[https://bitcoinops.org/en/newsletters/2019/05/29/|Optech Newsletter Covering OP_CHECKOUTPUTSHASHVERIFY]]
+*[[https://cyber.stanford.edu/sites/g/files/sbiybj9936/f/jeremyrubin.pdf|Structuring Multi Transaction Contracts in Bitcoin]]
+*[[https://github.com/jeremyrubin/lazuli]|Lazuli Notes (ECDSA based N-of-N Signatures for Certified Post-Dated UTXOs)]]
+*[[https://fc16.ifca.ai/bitcoin/papers/MES16.pdf|Bitcoin Covenants]]
+*[[https://bitcointalk.org/index.php?topic=278122.0|CoinCovenants using SCIP signatures, an amusingly bad idea.]]
+*[[https://fc17.ifca.ai/bitcoin/papers/bitcoin17-final28.pdf|Enhancing Bitcoin Transactions with Covenants]]
+
+==Copyright==
+This document is licensed under the 3-clause BSD license.
