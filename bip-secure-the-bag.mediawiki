@@ -24,7 +24,7 @@ OP_SECURETHEBAG uses opcode OP_RESERVED1 (0x89) during Tapscript execution.
 OP_SECURETHEBAG verifies the following conditions:
 
 * The following script is a minimal data push of 32 bytes
-* The SHA256 TaggedHash("BagHash") of the serialized version, locktime, number of inputs, and outputs matches the value provided
+* The SHA256 TaggedHash("BagHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the value provided
 
 If the operations following OP_SECURETHEBAG are not a 32-byte data push,
 it is ignored. Otherwise, if hash is not equal to the hash provided, execution fails.
@@ -174,7 +174,7 @@ In any case, a user is more likely to, given Tapscript's API, compile any code
 with multiple <code>OP_SECURETHEBAG</code> operations into separate branches.
 
 
-====The SHA256 TaggedHash("BagHash") of the serialized version, locktime, number of inputs, and outputs matches the value provided====
+====The SHA256 TaggedHash("BagHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the value provided====
 
 
 The set of data committed to is the set of data which can impact the TXID of the
@@ -186,6 +186,35 @@ redemtion TXID could be malleated.
 It is not a concern that exposing this hash on the stack might allow parsing of
 the data hashed, because they are already known exactly at the time of script
 construction.
+
+=====Committing to the outputs hash=====
+
+This ensures that spending the UTXO is guaranteed to create the exact outputs
+requested.
+
+We commit to the hash rather than the values themselves as this is already
+precomputed for each transaction.
+
+=====Committing to the Sequences Hash=====
+
+If we don't commit to the sequences, then the TXID can be malleated. This also
+allows us to enforce a relative sequence lock without an OP_CSV. It is
+insufficient to just use OP_CSV because OP_CSV enforces a minimum nSequence
+value, not a literal value.
+
+We commit to the hash rather than the values themselves as this is already
+precomputed for each transaction.
+
+
+=====Committing to the ScriptSig=====
+
+The scriptsig in a segwit transaction must be exactly empty, unless it is a P2SH
+segwit transaction in which case it must be only the exact redeemscript.
+
+To prevent succeptibility to malleability when not using a segwit input, we also
+commit to the scriptsig. This makes it possible to use a 2 input OP_SECURETHEBAG
+with a legacy pre-signed spend, as long as the exact scriptsig for the legacy
+output is committed.
 
 =====Committing to the version and locktime=====
 
@@ -318,7 +347,7 @@ SegWit Taproot version.
 
 
 ==Specification==
-The below code is the main logic for verifying <code>OP_SECURETHEBAG</code>.
+The below code is the main logic for verifying OP_SECURETHEBAG.
 
 
     case OP_SECURETHEBAG:
@@ -351,12 +380,30 @@ The hash is computed as follows:
     static const CHashWriter BagHash = TaggedHash("BagHash");
     template<typename TxType>
     uint256 GetSecuredBagHash(const TxType& tx) {
-        return (CHashWriter(BagHash)
-        << tx.nVersion
-        << tx.nLockTime
-        << uint64_t(tx.vin.size())
-        << tx.vout
-        ).GetSHA256();
+
+        CHashWriter hash_outputs(SER_GETHASH, 0);
+        CHashWriter hash_sequences(SER_GETHASH, 0);
+        for (const auto& txout : tx.vout) {
+            hash_outputs << txout;
+        }
+        for (const auto& txin : tx.vin) {
+            hash_sequences << txin.nSequence;
+        }
+        uint256 outputs_hash = hash_outputs.GetSHA256();
+        uint256 sequences_hash = hash_sequences.GetSHA256();
+        return GetSecuredBagHash(tx, outputs_hash, sequences_hash);
+    }
+
+    template<typename TxType>
+    uint256 GetSecuredBagHash(const TxType& tx, uint256& outputs_hash, uint256& sequences_hash) {
+        auto h =  CHashWriter(BagHash)
+            << tx.nVersion << tx.nLockTime
+            << outputs_hash << sequences_hash
+            << uint64_t(tx.vin.size());
+        for (const auto& in : tx.vin) {
+            h << in.scriptSig;
+        }
+        return h.GetSHA256();
     }
 
 
