@@ -181,7 +181,7 @@ The set of data committed to is the set of data which can impact the TXID of the
 transaction, other than the inputs. This ensures that for a given known input,
 the TXIDs can also be known ahead of time as long as the inputs are SegWit.
 Otherwise, OP_SECURETHEBAG would not be usable for Channel Factories as the
-redemtion TXID could be malleated.
+redemption TXID could be malleated.
 
 It is not a concern that exposing this hash on the stack might allow parsing of
 the data hashed, because they are already known exactly at the time of script
