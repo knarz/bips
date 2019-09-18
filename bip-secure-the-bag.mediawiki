@@ -275,7 +275,7 @@ preventing the 'half spend' problem.
 These covenants, as restricted as they are, bear some risks.  
 
 The preimage paired with OP_SECURETHEBAG may be unknown or the Taproot may be
-constructed with an public key with an unknown private key. Knowing that an
+constructed with a public key with an unknown private key. Knowing that an
 address is spendable from is incompatible with sender's ability to spend to any
 address (especially, OP_RETURN). If a sender needs to know the recipient could
 remove the covenant before spending, they may request a signature of an
@@ -316,9 +316,9 @@ unintended behavior.
 
 Alternatively, CHECKSIGFROMSTACK or SIGHASH_NOINPUT based covenant designs might
 be able to implement covenants as well. SIGHASH_NOINPUT bears additional risks
-that preclude it's viability for inclusion in Bitcoin.  CHECKSIGFROMSTACK is
-more complicated to use that OP_SECURETHEBAG, and encumbers additional
-verification overhead absent from OP_SECURETHEBAG. It's potential recursion
+that preclude its viability for inclusion in Bitcoin.  CHECKSIGFROMSTACK is
+more complicated to use than OP_SECURETHEBAG, and encumbers additional
+verification overhead absent from OP_SECURETHEBAG. Its potential recursion
 issues also make it more difficult to advocate for inclusion in Bitcoin.
 
 
