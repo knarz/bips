@@ -11,7 +11,7 @@
 ==Abstract==
 
 This BIP proposes a new opcode, OP_SECURETHEBAG, to be activated
-for Tapscript version 0.
+as a change to the semantics of OP_NOP4.
 
 The new opcode has applications for transaction congestion control and payment
 channel instantiation, among others, which are described in the Motivation
@@ -19,7 +19,7 @@ section of this BIP.
 
 ==Summary==
 
-OP_SECURETHEBAG uses opcode OP_RESERVED1 (0x89) during Tapscript execution.
+OP_SECURETHEBAG uses opcode OP_NOP4 (0xb3) as a soft fork upgrade.
 
 OP_SECURETHEBAG verifies the following conditions:
 
@@ -66,15 +66,16 @@ make sense when N*size_of(Output) > log(N)*size_of(OP_SECURETHEBAG Txn) +
 size_of(Output). Assuming straightforward transaction sizes, this is around 10
 recipients.
 
-Furthermore, the Taproot can commit to variable size expansions -- say, one node
+Furthermore, the script can commit to variable size expansions -- say, one node
 which expands by 2, by 4, by 8, etc. This allows a trade off between transaction
-overhead and immediately available block space.  The Merkle tree lookup in that
-case is O(log(log(N))) extra overhead, but the tree can be Huffman encoded to
-make it E[O(1)] depending on block demand.
+overhead and immediately available block space. Depending on implementation
+(either at the transaction level, the script level, or via Taproot), the Merkle
+tree lookup in that case is O(log(log(N))) extra overhead, but the tree can be
+Huffman encoded to make it E[O(1)] depending on block demand.
 
-Each node of the tree can also attempt to 'opt in' to preferring a Taproot
-signature based spend, but if participants are offline or malicious the
-expansion can proceed to smaller groups.
+Each node of the tree can also attempt to 'opt in' to preferring a multiparty
+signature based spend (using Schnorr signatures or Taproot), but if participants
+are offline or malicious the expansion can proceed to smaller groups.
 
 The overall overhead of the tree approach (without optimizations) is from the
 perspective of each user O(log(N)) transactions with an expectation of just 1
@@ -99,11 +100,12 @@ is provided in this BIP's subdirectory.
 Using OP_SECURETHEBAG for Channel Factories is similar to the use for Congestion
 Control, except the leaf nodes should be set up as a channels instead of plain
 payments. The channel can be between the sender and recipient or a target of
-recipient's choice. Using an OP_SECURETHEBAG Taproot, the recipient may even
-give the sender an address which makes a channel unbeknownst to them.
+recipient's choice. Using an OP_SECURETHEBAG, the recipient may even
+give the sender an address which makes a set of channels unbeknownst to them.
 
 These channels are already time insensitive for setup, as all punishments can be
-relative timelocked to the actual instantiation.
+relative timelocked to the actual instantiation. This enables set-up of channels
+non-interactively in the case of a single funder.
 
 This permits instant liquidity on the coins sent using this delayed method.
 
@@ -262,24 +264,23 @@ fungibility risks -- coins could be minted which have a permanent restriction on
 how they may or may not be spent.
 
 In the approach presented here, the covenants are severely restricted as
-follows. All covenants are wrapped with a multisig based key which can preempt
-the covenant's requirements.  Furthermore, the structure of OP_SECURETHEBAG
-covenants is such that the outputs must be known exactly at the time of
-construction. Therefore it is only possible to create covenants which expand in
-a finite number of steps and is equivalent to, in a safety sense, to the set of
-transactions which create all the inputs at reachable end states. Furthermore,
-covenants are restricted to be spendable as a known number of inputs only,
-preventing the 'half spend' problem.
+follows. The structure of OP_SECURETHEBAG covenants is such that the outputs
+must be known exactly at the time of construction. Therefore it is only possible
+to create covenants which expand in a finite number of steps and is equivalent
+to, in a safety sense, to the set of transactions which create all the inputs at
+reachable end states. Furthermore, covenants are restricted to be spendable as a
+known number of inputs only, preventing the 'half spend' problem in which an
+input A and B both commit to creating outputs C, spent independently create
+two sets of outputs C but spent together create a single set.
 
 
 These covenants, as restricted as they are, bear some risks.  
 
-The preimage paired with OP_SECURETHEBAG may be unknown or the Taproot may be
-constructed with a public key with an unknown private key. Knowing that an
-address is spendable from is incompatible with sender's ability to spend to any
-address (especially, OP_RETURN). If a sender needs to know the recipient could
-remove the covenant before spending, they may request a signature of an
-challenge string from the recipients.
+The preimage paired with OP_SECURETHEBAG may be unknown or otherwise
+unsatisfiable. Knowing that an address is spendable from is incompatible with
+sender's ability to spend to any address (especially, OP_RETURN). If a sender
+needs to know the recipient could remove the covenant before spending, they may
+request a signature of an challenge string from the recipients.
 
 Key-reuse with OP_SECURETHEBAG may be abused as a form of "forwarding address
 contracts". A forwarding address is a script which can automatically execute in
@@ -287,21 +288,21 @@ a predefined way. For example, a hot wallet might have coins which can
 automatically be moved to a cold storage address after a relative timeout.  The
 issue is that reusing such keys can be very unsafe. For example, suppose one
 creates an address which forwards 1 BTC to cold storage.  Creating an output to
-this address with less than 1 BTC will be frozen until the Taproot signature
-path is used. If more than 1 BTC is paid to the address, and the redeemscript is
-known publicly, then anyone can cause the funds in excess of 1BTC to be paid as
-a large miner fee. OP_SECURETHEBAG could commit to the exact amount of bitcoin
-provided by the inputs/amount of fee paid, but as this is a user error and not a
-malleability issue this is not done.  Further, it's possible to later introduce
-opcodes which commit to how much fee should be spent at max or other
-restrictions that would make reusable keys safer to use.
+this address with less than 1 BTC will be frozen permanently. If more than 1 BTC
+is paid to the address, and the redeemscript is known publicly, then anyone can
+cause the funds in excess of 1BTC to be paid as a large miner fee.
+OP_SECURETHEBAG could commit to the exact amount of bitcoin provided by the
+inputs/amount of fee paid, but as this is a user error and not a malleability
+issue this is not done.  Further, it's possible to later introduce opcodes which
+commit to how much fee should be spent at max or other restrictions that would
+make reusable keys safer to use.
 
-For now, it is best to not reuse a Taproot key unless you are
-certain all the branches are compatible with your desired payment. This
-limitation and risk is not unique to OP_SECURETHEBAG, Taproot scripts
-may contain many logical branches that would be unsafe for being spent to
-multiple times (e.g., a Hash Time Lock branch should be instantiated with unique
-hashes each time it is used).
+In general, it is best to not reuse any address unless you are certain that the
+address is compatible with your desired payment. This limitation and risk is not
+unique to OP_SECURETHEBAG. For example, atomic swap scripts are single use once
+the hash is revealed. Future Taproot scripts may contain many logical branches that
+would be unsafe for being spent to multiple times (e.g., a Hash Time Lock branch
+should be instantiated with unique hashes each time it is used).
 
 OP_SECURETHEBAG is substantially less risky than other covenant systems. If ever
 implemented, other covenant systems could make the OP_SECURETHEBAG's
@@ -331,101 +332,77 @@ An earlier version of OP_SECURETHEBAG, OP_CHECKOUTPUTSHASHVERIFY, is withdrawn
 in favor of OP_SECURETHEBAG. OP_CHECKOUTPUTSHASHVERIFY did not commit to the
 version or lock time and was thus insecure.
 
-It would also be possible to implement OP_SECURETHEBAG as a template tapscript
-program. This would roughly entail to transforming the script
-<code>OP_SECURETHEBAG</code> into <code>OP_SECURETHEBAG <hash of version,
-locktime, number of inputs, outputs> </code> before looking it up in the Taproot
-Merkle Tree. This approach could save 34 bytes per transaction compared to using
-OP_SECURETHEBAG (which may be a whole tree of transactions). However, such a
-template approach requires changes to Taproot, so can be considered as a
-possibility, but is not proposed concretely here so as not to slow down Taproot
-deployment with bikeshedding the templating system. An example implementation of
-this approach is provided [[https://github.com/JeremyRubin/bitcoin/tree/taproot-with-builtin-templates|here]]
-nonetheless.  Such an efficient templating technique can be deployed in a future
-SegWit Taproot version.
-
+OP_SECURETHEBAG could also be implemented as an extension to Taproot, and was
+proposed this way earlier. However, given that OP_SECURETHEBAG has no dependency
+on Taproot, it is preferable to deploy it independently.
 
 
 ==Specification==
 The below code is the main logic for verifying OP_SECURETHEBAG.
 
-
     case OP_SECURETHEBAG:
     {
-        // Don't verify before enabled...
-        if (flags & SCRIPT_VERIFY_BAG_SECURED) {
-            CScript::const_iterator lookahead = pc;
-            opcodetype argument;
-            // Read ahead one opcode as a lookahead argument
-            if (!script.GetOp(lookahead, argument, vchPushValue))
-                return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
-            // If lookahead argument was exactly 32 bytes, check OutputHash
-            // This is so that we can later add different semantics for this opcode
-            if (vchPushValue.size() == 32) {
-                // Argument should be == 0x20 -- will fail later anyways
-                if (!CheckMinimalPush(vchPushValue, argument)) {
-                    return set_error(serror, SCRIPT_ERR_MINIMALDATA);
-                }
-                // Lastly, check that the outputs hash matches the passed value
-                if (!checker.CheckBagSecured(vchPushValue)) {
-                    return set_error(serror, SCRIPT_ERR_BAG_NOT_SECURED);
-                }
-            }
-        }
+        // when not enabled; treat as a NOP4
+        if (!(flags & SCRIPT_VERIFY_SECURETHEBAG)) break;
+        // Read one step ahead; we expect to push 32 bytes
+        CScript::const_iterator tmp_pc = pc;
+        opcodetype push_op;
+        if (!script.GetOp(tmp_pc, push_op, vchPushValue)) return set_error(serror, SCRIPT_ERR_BAD_OPCODE);
+        // If the push was not 32 bytes, ignore it:
+        //    upgrade can add semantics for this opcode with different length args
+        if (vchPushValue.size() != 32) break;
+        // push_op should be minimal, i.e. 0x20 -- will fail later anyways
+        if (!CheckMinimalPush(vchPushValue, push_op)) return set_error(serror, SCRIPT_ERR_MINIMALDATA);
+        // Check the BagHash computed from the transaction matches the literal value
+        if (!checker.CheckBagSecured(vchPushValue)) return set_error(serror, SCRIPT_ERR_BAG_NOT_SECURED);
+        // Success
+        break;
     }
-    break;
 
 The hash is computed as follows:
 
-    static const CHashWriter BagHash = TaggedHash("BagHash");
-    template<typename TxType>
-    uint256 GetSecuredBagHash(const TxType& tx) {
-
-        CHashWriter hash_outputs(SER_GETHASH, 0);
-        CHashWriter hash_sequences(SER_GETHASH, 0);
-        for (const auto& txout : tx.vout) {
-            hash_outputs << txout;
-        }
-        for (const auto& txin : tx.vin) {
-            hash_sequences << txin.nSequence;
-        }
-        uint256 outputs_hash = hash_outputs.GetSHA256();
-        uint256 sequences_hash = hash_sequences.GetSHA256();
-        return GetSecuredBagHash(tx, outputs_hash, sequences_hash);
+    CHashWriter TaggedHash(const std::string& tag) {
+        CHashWriter writer(SER_GETHASH, 0);
+        uint256 taghash;
+        CSHA256().Write((unsigned char*)tag.data(), tag.size()).Finalize(taghash.begin());
+        writer << taghash << taghash;
+        return writer;
     }
-
-    template<typename TxType>
-    uint256 GetSecuredBagHash(const TxType& tx, uint256& outputs_hash, uint256& sequences_hash) {
-        auto h =  CHashWriter(BagHash)
+    uint256 GetSequenceSHA256(const CTransaction& tx) {
+        CHashWriter ss(SER_GETHASH, 0);
+        for (const auto& in : tx.vin) ss << in.nSequence;
+        return ss.GetSHA256();
+    }
+    uint256 GetOutputsSHA256(const CTransaction& tx) {
+        CHashWriter ss(SER_GETHASH, 0);
+        for (const auto& out : tx.vout) ss << out;
+        return ss.GetSHA256();
+    }
+    uint256 GetSecuredBagHash(const CTransaction& tx) {
+        auto h =  TaggedHash("BagHash")
             << tx.nVersion << tx.nLockTime
-            << outputs_hash << sequences_hash
+            << GetOutputsSHA256(tx) << GetSequenceSHA256(tx)
             << uint64_t(tx.vin.size());
-        for (const auto& in : tx.vin) {
-            h << in.scriptSig;
-        }
+        for (const auto& in : tx.vin) h << in.scriptSig;
         return h.GetSHA256();
     }
 
-
-
 ==Deployment==
 
-The deployment is intended to be done with Tapscript
-https://github.com/sipa/bips/blob/bip-schnorr/bip-tapscript.mediawiki.
+Deployment should be done via BIP 9 VersionBits.
 
-The deployment schedule can either be at the same time as Tapscript, or some
-time later.
-
+The start time and bit in the implementation are currently set to bit 25 and
+January 1st, 2020, but this is subject to change while the BIP is a draft.
 
 
 ==Implementations==
 
-An implementation and tests are available here:
-https://github.com/JeremyRubin/bitcoin/tree/secure_the_bag.
+An example implementation and tests are available here:
+https://github.com/JeremyRubin/bitcoin/tree/securethebag_master.
 
 
 == References ==
-
+*[[https://youtu.be/YxsjdIl0034?t=2451|Scaling Bitcoin Presentation]]
 *[[https://bitcoinops.org/en/newsletters/2019/05/29/|Optech Newsletter Covering OP_CHECKOUTPUTSHASHVERIFY]]
 *[[https://cyber.stanford.edu/sites/g/files/sbiybj9936/f/jeremyrubin.pdf|Structuring Multi Transaction Contracts in Bitcoin]]
 *[[https://github.com/jeremyrubin/lazuli]|Lazuli Notes (ECDSA based N-of-N Signatures for Certified Post-Dated UTXOs)]]
