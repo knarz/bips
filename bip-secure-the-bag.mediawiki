@@ -394,6 +394,9 @@ Deployment should be done via BIP 9 VersionBits.
 The start time and bit in the implementation are currently set to bit 25 and
 January 1st, 2020, but this is subject to change while the BIP is a draft.
 
+In order to facilitate using OP_SECURETHEBAG, the common case of a bare script
+consisting only of an OP_SECURETHEBAG and no scriptSig data shall be made
+standard to permit relaying.
 
 ==Implementations==
 
