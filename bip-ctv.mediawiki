@@ -1,6 +1,6 @@
 <pre>
-  BIP: bip-secure-the-bag
-  Title: OP_SECURETHEBAG
+  BIP: bip-ctv
+  Title: OP_CHECKTEMPLATEVERIFY
   Author: Jeremy Rubin <j@rubin.io>
   Status: Draft
   Type: Standards Track
@@ -10,7 +10,7 @@
 
 ==Abstract==
 
-This BIP proposes a new opcode, OP_SECURETHEBAG, to be activated
+This BIP proposes a new opcode, OP_CHECKTEMPLATEVERIFY, to be activated
 as a change to the semantics of OP_NOP4.
 
 The new opcode has applications for transaction congestion control and payment
@@ -19,14 +19,14 @@ section of this BIP.
 
 ==Summary==
 
-OP_SECURETHEBAG uses opcode OP_NOP4 (0xb3) as a soft fork upgrade.
+OP_CHECKTEMPLATEVERIFY uses opcode OP_NOP4 (0xb3) as a soft fork upgrade.
 
-OP_SECURETHEBAG verifies the following conditions:
+OP_CHECKTEMPLATEVERIFY verifies the following conditions:
 
 * The following script is a minimal data push of 32 bytes
-* The SHA256 TaggedHash("BagHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the value provided
+* The SHA256 TaggedHash("StandardTemplateHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the value provided
 
-If the operations following OP_SECURETHEBAG are not a 32-byte data push,
+If the operations following OP_CHECKTEMPLATEVERIFY are not a 32-byte data push,
 it is ignored. Otherwise, if hash is not equal to the hash provided, execution fails.
 
 ==Motivation==
@@ -42,12 +42,12 @@ of highly valuable use cases without significant risk. For example:
 ===Congestion Controlled Transactions===
 
 When there is a high demand for blockspace it becomes very expensive to make
-transactions. By using OP_SECURETHEBAG, a large volume payment processor may
+transactions. By using OP_CHECKTEMPLATEVERIFY, a large volume payment processor may
 aggregate all their payments into a single O(1) transaction for purposes of
 confirmation. Then, some time later, the payments can be expanded out of that
 UTXO when the demand for blockspace is decreased.
 
-Without OP_SECURETHEBAG, this is still possible to do with Schnorr signatures
+Without OP_CHECKTEMPLATEVERIFY, this is still possible to do with Schnorr signatures
 (even with ECDSA given multiparty schemes). However, it is not possible to do
 non-interactively, which fundamentally limits the viability of the approach as
 interacting to collect signatures from all recipients may be difficult or slow.
@@ -60,9 +60,9 @@ output to N. Even this simple use case is highly useful because the expansion
 can wait till cheap block space is available.
 
 As the number of recipients grows, a sender can commit to a tree of outputs
-using OP_SECURETHEBAG. The tree permits them to confirm as many payments as they
+using OP_CHECKTEMPLATEVERIFY. The tree permits them to confirm as many payments as they
 like (i.e., even more than can fit into a block). Such a technique starts to
-make sense when N*size_of(Output) > log(N)*size_of(OP_SECURETHEBAG Txn) +
+make sense when N*size_of(Output) > log(N)*size_of(OP_CHECKTEMPLATEVERIFY Txn) +
 size_of(Output). Assuming straightforward transaction sizes, this is around 10
 recipients.
 
@@ -86,21 +86,21 @@ is less.
 The below chart showcases the structure of these transactions in comparison to
 normal transactions and batched transactions.
 
-<img src="bip-secure-the-bag/states.svg" align="middle"></img>
+<img src="ctv/states.svg" align="middle"></img>
 
 A simulation is shown below of what impact this could have on mempool backlog
 given 5% network adoption, and 50% network adoption. The code for the simulation
 is provided in this BIP's subdirectory.
 
-<img src="bip-secure-the-bag/five.png" align="middle"></img>
-<img src="bip-secure-the-bag/fifty.png" align="middle"></img>
+<img src="ctv/five.png" align="middle"></img>
+<img src="ctv/fifty.png" align="middle"></img>
 
 ===Channel Factories===
 
-Using OP_SECURETHEBAG for Channel Factories is similar to the use for Congestion
+Using OP_CHECKTEMPLATEVERIFY for Channel Factories is similar to the use for Congestion
 Control, except the leaf nodes should be set up as a channels instead of plain
 payments. The channel can be between the sender and recipient or a target of
-recipient's choice. Using an OP_SECURETHEBAG, the recipient may even
+recipient's choice. Using an OP_CHECKTEMPLATEVERIFY, the recipient may even
 give the sender an address which makes a set of channels unbeknownst to them.
 
 These channels are already time insensitive for setup, as all punishments can be
@@ -120,7 +120,7 @@ pre-set amounts) into a lukewarm wallet operated by an isolated support desk.
 The support desk can then issue some funds to a hot wallet, and send the
 remainder back to cold storage with a similar withdrawal mechanism in place.
 
-This is all possible without OP_SECURETHEBAG, but OP_SECURETHEBAG
+This is all possible without OP_CHECKTEMPLATEVERIFY, but OP_CHECKTEMPLATEVERIFY
 eliminates the need for coordination and online signers, as well as reducing the
 ability for a support desk to improperly move funds.
 
@@ -130,7 +130,7 @@ time for compliance and risk desks to intervene.
 
 ===CoinJoin===
 
-OP_SECURETHEBAG makes it much easier to set up a trustless CoinJoin.
+OP_CHECKTEMPLATEVERIFY makes it much easier to set up a trustless CoinJoin.
 
 All participants agree on a single UTXO which commits to its output hash,
 participants then can fund the transaction with whatever inputs they like.
@@ -142,11 +142,11 @@ improve fungibility.
 
 ==Design==
 
-The goal of OP_SECURETHEBAG is to be minimal impact on the existing codebase --
+The goal of OP_CHECKTEMPLATEVERIFY is to be minimal impact on the existing codebase --
 in the future, as we become aware of more complex but shown to be safe use cases
 new covenant types might be enabled.
 
-Critically, because OP_SECURETHEBAG is a Tapscript opcode, it is intended that
+Critically, because OP_CHECKTEMPLATEVERIFY is a Tapscript opcode, it is intended that
 participants may collaborate to replace the Tapscript path with a signature.
 This lifts the requirement of the output being spent alone and the exact match
 of output hashes, if other participant dependencies (like channel state) can be
@@ -157,32 +157,32 @@ Below we'll discuss the rules one-by-one:
 
 ====The following script is a minimal data push of 32 bytes====
 
-OP_SECURETHEBAG uses the push after the opcode rather than before the opcode.
-Were OP_SECURETHEBAG to use the data from the stack it would be possible to
+OP_CHECKTEMPLATEVERIFY uses the push after the opcode rather than before the opcode.
+Were OP_CHECKTEMPLATEVERIFY to use the data from the stack it would be possible to
 construct in script what data is committed to. By using a data lookahead, we
 ensure that the outputs are known at the time of spending.  Minimalism is
-partially why OP_SECURETHEBAG uses a PushData32 (0x20) rather than a
+partially why OP_CHECKTEMPLATEVERIFY uses a PushData32 (0x20) rather than a
 literal/immediate value; it is messy to upgrade the parser to treat old opcodes
 as multi-byte opcodes. This can be done, depending on community feedback and
 preference. It is left out of this proposal for now.
 
 
 The script programmer is still able to conditionalize which hash it is checked
-on, e.g., <code>OP_IF OP_SECURETHEBAG <outputs 1> OP_ELSE OP_SECURETHEBAG <outputs 2>
+on, e.g., <code>OP_IF OP_CHECKTEMPLATEVERIFY <outputs 1> OP_ELSE OP_CHECKTEMPLATEVERIFY <outputs 2>
 OP_ENDIF</code>. However, by keeping the outputs literal hashes we limit the
 possibilities.
 
 In any case, a user is more likely to, given Tapscript's API, compile any code
-with multiple <code>OP_SECURETHEBAG</code> operations into separate branches.
+with multiple <code>OP_CHECKTEMPLATEVERIFY</code> operations into separate branches.
 
 
-====The SHA256 TaggedHash("BagHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the value provided====
+====The SHA256 TaggedHash("StandardTemplateHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the value provided====
 
 
 The set of data committed to is the set of data which can impact the TXID of the
 transaction, other than the inputs. This ensures that for a given known input,
 the TXIDs can also be known ahead of time as long as the inputs are SegWit.
-Otherwise, OP_SECURETHEBAG would not be usable for Channel Factories as the
+Otherwise, OP_CHECKTEMPLATEVERIFY would not be usable for Channel Factories as the
 redemption TXID could be malleated.
 
 It is not a concern that exposing this hash on the stack might allow parsing of
@@ -214,7 +214,7 @@ The scriptsig in a segwit transaction must be exactly empty, unless it is a P2SH
 segwit transaction in which case it must be only the exact redeemscript.
 
 To prevent succeptibility to malleability when not using a segwit input, we also
-commit to the scriptsig. This makes it possible to use a 2 input OP_SECURETHEBAG
+commit to the scriptsig. This makes it possible to use a 2 input OP_CHECKTEMPLATEVERIFY
 with a legacy pre-signed spend, as long as the exact scriptsig for the legacy
 output is committed.
 
@@ -224,7 +224,7 @@ Were these values not committed, it would be possible to delay the spending of
 an output arbitrarily as well as possible to change the TXID.
 
 Committing these values, rather than restricting them to specific values, is
-more flexible as it permits users of OP_SECURETHEBAG the set the version and
+more flexible as it permits users of OP_CHECKTEMPLATEVERIFY the set the version and
 locktime as they please.
 
 =====Committing to the number of inputs=====
@@ -242,8 +242,8 @@ example:
 
 Tapscript paths: 
 
-    Path A: <+24 hours> OP_CHECKSEQUENCEVERIFY OP_SECURETHEBAG <Pay Alice 1 Bitcoin (1 input) nLockTime for +24 hours>
-    Path B: OP_SECURETHEBAG <Pay Bob 2 Bitcoin (2 inputs)>
+    Path A: <+24 hours> OP_CHECKSEQUENCEVERIFY OP_CHECKTEMPLATEVERIFY <Pay Alice 1 Bitcoin (1 input) nLockTime for +24 hours>
+    Path B: OP_CHECKTEMPLATEVERIFY <Pay Bob 2 Bitcoin (2 inputs)>
 
 In this case, there are 24 hours for the output to, with the addition of a
 second output, pay Bob 2 BTC. If 24 hours lapses, then Alice may redeem her 1
@@ -252,8 +252,8 @@ BTC from the contract. Both UTXOs may have the exact same Path B, or only one.
 The issue with these constructs is that there are N! orders that the inputs can
 be ordered in and it's not generally possible to restrict the ordering.
 
-OP_SECURETHEBAG allows for users to guarantee the exact number of inputs being
-spent. In general, using OP_SECURETHEBAG with more than one input is difficult
+OP_CHECKTEMPLATEVERIFY allows for users to guarantee the exact number of inputs being
+spent. In general, using OP_CHECKTEMPLATEVERIFY with more than one input is difficult
 and exposes subtle issues, so multiple inputs should not be used except in
 specific applications.
 
@@ -264,7 +264,7 @@ fungibility risks -- coins could be minted which have a permanent restriction on
 how they may or may not be spent.
 
 In the approach presented here, the covenants are severely restricted as
-follows. The structure of OP_SECURETHEBAG covenants is such that the outputs
+follows. The structure of OP_CHECKTEMPLATEVERIFY covenants is such that the outputs
 must be known exactly at the time of construction. Therefore it is only possible
 to create covenants which expand in a finite number of steps and is equivalent
 to, in a safety sense, to the set of transactions which create all the inputs at
@@ -276,13 +276,13 @@ two sets of outputs C but spent together create a single set.
 
 These covenants, as restricted as they are, bear some risks.  
 
-The preimage paired with OP_SECURETHEBAG may be unknown or otherwise
+The preimage paired with OP_CHECKTEMPLATEVERIFY may be unknown or otherwise
 unsatisfiable. Knowing that an address is spendable from is incompatible with
 sender's ability to spend to any address (especially, OP_RETURN). If a sender
 needs to know the recipient could remove the covenant before spending, they may
 request a signature of an challenge string from the recipients.
 
-Key-reuse with OP_SECURETHEBAG may be abused as a form of "forwarding address
+Key-reuse with OP_CHECKTEMPLATEVERIFY may be abused as a form of "forwarding address
 contracts". A forwarding address is a script which can automatically execute in
 a predefined way. For example, a hot wallet might have coins which can
 automatically be moved to a cold storage address after a relative timeout.  The
@@ -291,7 +291,7 @@ creates an address which forwards 1 BTC to cold storage.  Creating an output to
 this address with less than 1 BTC will be frozen permanently. If more than 1 BTC
 is paid to the address, and the redeemscript is known publicly, then anyone can
 cause the funds in excess of 1BTC to be paid as a large miner fee.
-OP_SECURETHEBAG could commit to the exact amount of bitcoin provided by the
+OP_CHECKTEMPLATEVERIFY could commit to the exact amount of bitcoin provided by the
 inputs/amount of fee paid, but as this is a user error and not a malleability
 issue this is not done.  Further, it's possible to later introduce opcodes which
 commit to how much fee should be spent at max or other restrictions that would
@@ -299,14 +299,14 @@ make reusable keys safer to use.
 
 In general, it is best to not reuse any address unless you are certain that the
 address is compatible with your desired payment. This limitation and risk is not
-unique to OP_SECURETHEBAG. For example, atomic swap scripts are single use once
+unique to OP_CHECKTEMPLATEVERIFY. For example, atomic swap scripts are single use once
 the hash is revealed. Future Taproot scripts may contain many logical branches that
 would be unsafe for being spent to multiple times (e.g., a Hash Time Lock branch
 should be instantiated with unique hashes each time it is used).
 
-OP_SECURETHEBAG is substantially less risky than other covenant systems. If ever
-implemented, other covenant systems could make the OP_SECURETHEBAG's
-functionality redundant. However, given OP_SECURETHEBAG's simple semantics and
+OP_CHECKTEMPLATEVERIFY is substantially less risky than other covenant systems. If ever
+implemented, other covenant systems could make the OP_CHECKTEMPLATEVERIFY's
+functionality redundant. However, given OP_CHECKTEMPLATEVERIFY's simple semantics and
 low on chain cost it's likely that it would continue to be used.
 
 More powerful covenants like those proposed by MES16, would also
@@ -318,32 +318,32 @@ unintended behavior.
 Alternatively, CHECKSIGFROMSTACK or SIGHASH_NOINPUT based covenant designs might
 be able to implement covenants as well. SIGHASH_NOINPUT bears additional risks
 that preclude its viability for inclusion in Bitcoin.  CHECKSIGFROMSTACK is
-more complicated to use than OP_SECURETHEBAG, and encumbers additional
-verification overhead absent from OP_SECURETHEBAG. Its potential recursion
+more complicated to use than OP_CHECKTEMPLATEVERIFY, and encumbers additional
+verification overhead absent from OP_CHECKTEMPLATEVERIFY. Its potential recursion
 issues also make it more difficult to advocate for inclusion in Bitcoin.
 
 
 Given the simplicity of this approach to implement and analyze, and the benefits
-realizable by user applications, the OP_SECURETHEBAG approach is proposed in
+realizable by user applications, the OP_CHECKTEMPLATEVERIFY approach is proposed in
 lieu of more complete covenants.
 
 ====Note on Similar Alternatives====
-An earlier version of OP_SECURETHEBAG, OP_CHECKOUTPUTSHASHVERIFY, is withdrawn
-in favor of OP_SECURETHEBAG. OP_CHECKOUTPUTSHASHVERIFY did not commit to the
+An earlier version of OP_CHECKTEMPLATEVERIFY, OP_CHECKOUTPUTSHASHVERIFY, is withdrawn
+in favor of OP_CHECKTEMPLATEVERIFY. OP_CHECKOUTPUTSHASHVERIFY did not commit to the
 version or lock time and was thus insecure.
 
-OP_SECURETHEBAG could also be implemented as an extension to Taproot, and was
-proposed this way earlier. However, given that OP_SECURETHEBAG has no dependency
+OP_CHECKTEMPLATEVERIFY could also be implemented as an extension to Taproot, and was
+proposed this way earlier. However, given that OP_CHECKTEMPLATEVERIFY has no dependency
 on Taproot, it is preferable to deploy it independently.
 
 
 ==Specification==
-The below code is the main logic for verifying OP_SECURETHEBAG.
+The below code is the main logic for verifying OP_CHECKTEMPLATEVERIFY.
 
-    case OP_SECURETHEBAG:
+    case OP_CHECKTEMPLATEVERIFY:
     {
         // when not enabled; treat as a NOP4
-        if (!(flags & SCRIPT_VERIFY_SECURETHEBAG)) break;
+        if (!(flags & SCRIPT_VERIFY_CHECKTEMPLATEVERIFY)) break;
         // Read one step ahead; we expect to push 32 bytes
         CScript::const_iterator tmp_pc = pc;
         opcodetype push_op;
@@ -379,7 +379,7 @@ The hash is computed as follows:
         return ss.GetSHA256();
     }
     uint256 GetSecuredBagHash(const CTransaction& tx) {
-        auto h =  TaggedHash("BagHash")
+        auto h =  TaggedHash("StandardTemplateHash")
             << tx.nVersion << tx.nLockTime
             << GetOutputsSHA256(tx) << GetSequenceSHA256(tx)
             << uint64_t(tx.vin.size());
@@ -394,8 +394,8 @@ Deployment should be done via BIP 9 VersionBits.
 The start time and bit in the implementation are currently set to bit 25 and
 January 1st, 2020, but this is subject to change while the BIP is a draft.
 
-In order to facilitate using OP_SECURETHEBAG, the common case of a bare script
-consisting only of an OP_SECURETHEBAG and no scriptSig data shall be made
+In order to facilitate using OP_CHECKTEMPLATEVERIFY, the common case of a bare script
+consisting only of an OP_CHECKTEMPLATEVERIFY and no scriptSig data shall be made
 standard to permit relaying.
 
 ==Implementations==
