@@ -33,7 +33,7 @@ currently executing input index.
 
 The recommended standardness rules additionally:
 
-* Reject non-32 byte or empty stack conditions as SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS.
+* Reject non-32 byte as SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS.
 
 ==Motivation==
 
@@ -415,7 +415,7 @@ this value is placed last.
 As an example, the following code checks an input index argument and concatenates it to the template and
 checks the template matches the transaction.
 
-    OP_SIZE 4 OP_EQUALVERIFY
+    OP_SIZE 4 OP_EQUALVERIF
     <nVersion || nLockTime || input count || sequences hash || output count || outputs hash>
     OP_SWAP OP_CAT OP_SHA256 OP_CHECKTEMPLATEVERIFY
 
