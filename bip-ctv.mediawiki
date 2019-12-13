@@ -21,22 +21,19 @@ section of this BIP.
 
 OP_CHECKTEMPLATEVERIFY uses opcode OP_NOP4 (0xb3) as a soft fork upgrade.
 
-When the following precondtions are met:
+OP_CHECKTEMPLATEVERIFY does the following:
 
-* The preceding operation was a data push (not across the scriptSig/scriptPubKey barrier)
-* The element on the stack is 32 bytes long
+* There is at least one element on the stack, fail otherwise
+* The element on the stack is 32 bytes long, NOP otherwise
+* The StandardTemplateHash of the transaction at the current input index is equal to the element on the stack, fail otherwise
 
-OP_CHECKTEMPLATEVERIFY verifies the following conditions:
-
-* The SHA256 TaggedHash("StandardTemplateHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig is equal to the element on the stack.
-
-
-If the preconditions are not met, it is treated as a NOP to permit future extensions.
+The StandardTemplateHash comitts to the serialized version, locktime, scriptSigs hash (if any
+non-null scriptSigs), number of inputs, sequences hash, number of outputs, outputs hash, and
+currently executing input index.
 
 The recommended standardness rules additionally:
 
 * Reject non-32 byte or empty stack conditions as SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS.
-* Reject 32 byte arguments on the stack (whether or not it came from a preceding push) if the value is not equal to the StandardTemplateHash.
 
 ==Motivation==
 
@@ -136,81 +133,65 @@ that output, they only have to verify their own sub-tree will pay them.
 ==Detailed Specification==
 The below code is the main logic for verifying CHECKTEMPLATEVERIFY, and is the canonical
 specification for the semantics of OP_CHECKTEMPLATEVERIFY.
+
     case OP_CHECKTEMPLATEVERIFY:
     {
         // if flags not enabled; treat as a NOP4
         if (!(flags & SCRIPT_VERIFY_STANDARD_TEMPLATE)) break;
-        // N.B., for the following two conditions users of OP_CHECKTEMPLATEVERIFY should
-        // be careful to ensure that they are not *relying* on either of these rules to
-        // treat OP_CHECKTEMPLATEVERIFY as future soft-forks will use these NOPs for
-        // upgrades. As such, we return the SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS when
-        // applicable.
-        //
-        // if the top of the stack isn't a constexpr, ignore and treat as OP_NOP4.
-        //
-        // Currently only a pushdata or number, not cross scriptSig/scriptPubKey, is
-        // constexpr.  This allows future soft-forks to broaden what we consider a
-        // "constexpr" to include stack items like the OP_DUP of something which is
-        // constexpr, so long as nothing which was formerly constexpr becomes
-        // non-constexpr.
-        //
-        // This also allows an eventual soft-fork to remove the constexpr check
-        // altogether, if shown to be safe to pass in the template parameters.
-        bool was_nop = stack.empty();
-        if (!was_nop) {
-            // If the data was not 32 bytes, treat as OP_NOP4:
-            //     future upgrade can add semantics for this opcode with different length args
-            switch (stack.back().size()) {
+        if (stack.size() < 1)
+            return set_error(serror, SCRIPT_ERR_INVALID_STACK_OPERATION);
+        // If the argument was not 32 bytes, treat as OP_NOP4:
+        switch (stack.back().size()) {
             case 32:
-            {
-                // only constexpr data is not treated as NOP
-                was_nop |= !top_of_stack_is_constexpr;
-                // don't check further if we were a NOP for consensus, and we don't want to check
-                // for standardness rules
-                if (was_nop && !(flags & SCRIPT_VERIFY_STRICT_STANDARD_TEMPLATE)) 
-                    break;
-                // Check the Template Hash computed from the transaction matches the literal value
-                if (!checker.CheckStandardTemplateHash(stack.back()))
+                if (!checker.CheckStandardTemplateHash(stack.back())) {
                     return set_error(serror, SCRIPT_ERR_TEMPLATE_MISMATCH);
-                break; //! break to end of switch
-            }
+                }
+                break;
             default:
-            {
-                was_nop |= true;
-                break; //! break to end of switch
-            }
-            } //! end switch
+                // future upgrade can add semantics for this opcode with different length args
+                // so discourage use when applicable
+                if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS) {
+                    return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
+                }
         }
-        if ((flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_NOPS) && was_nop)
-            return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS);
-        break;
     }
+    break;
 
 The hash is computed as follows:
 
-    CHashWriter TaggedHash(const std::string& tag) {
-        CHashWriter writer(SER_GETHASH, 0);
-        uint256 taghash;
-        CSHA256().Write((unsigned char*)tag.data(), tag.size()).Finalize(taghash.begin());
-        writer << taghash << taghash;
-        return writer;
+    uint256 GetStandardTemplateHash(const CTransaction& tx, uint32_t input_index) {
+        return GetStandardTemplateHash(tx, GetOutputsSHA256(tx), GetSequenceSHA256(tx), input_index);
     }
-    uint256 GetSequenceSHA256(const CTransaction& tx) {
-        CHashWriter ss(SER_GETHASH, 0);
-        for (const auto& in : tx.vin) ss << in.nSequence;
-        return ss.GetSHA256();
+    uint256 GetStandardTemplateHash(const CTransaction& tx, const uint256& outputs_hash, const uint256& sequences_hash,
+                                    const uint32_t input_index) {
+        bool skip_scriptSigs = std::find_if(tx.vin.begin(), tx.vin.end(),
+                [](const CTxIn& c) { return c.scriptSig != CScript(); }) == tx.vin.end();
+        return skip_scriptSigs ? GetStandardTemplateHashEmptyScript(tx, outputs_hash, sequences_hash, input_index) :
+            GetStandardTemplateHashWithScript(tx, outputs_hash, sequences_hash, GetScriptSigsSHA256(tx), input_index);
     }
-    uint256 GetOutputsSHA256(const CTransaction& tx) {
-        CHashWriter ss(SER_GETHASH, 0);
-        for (const auto& out : tx.vout) ss << out;
-        return ss.GetSHA256();
+    uint256 GetStandardTemplateHashWithScript(const CTransaction& tx, const uint256& outputs_hash, const uint256& sequences_hash,
+                                    const uint256& scriptSig_hash, const uint32_t input_index) {
+        auto h =  CHashWriter(SER_GETHASH, 0)
+            << tx.nVersion
+            << tx.nLockTime
+            << scriptSig_hash
+            << uint32_t(tx.vin.size())
+            << sequences_hash
+            << uint32_t(tx.vout.size())
+            << outputs_hash
+            << input_index;
+        return h.GetSHA256();
     }
-    uint256 GetStandardTemplateHash(const CTransaction& tx) {
-        auto h =  TaggedHash("StandardTemplateHash")
-            << tx.nVersion << tx.nLockTime
-            << GetOutputsSHA256(tx) << GetSequenceSHA256(tx)
-            << uint64_t(tx.vin.size());
-        for (const auto& in : tx.vin) h << in.scriptSig;
+    uint256 GetStandardTemplateHashEmptyScript(const CTransaction& tx, const uint256& outputs_hash, const uint256& sequences_hash,
+                                    const uint32_t input_index) {
+        auto h =  CHashWriter(SER_GETHASH, 0)
+            << tx.nVersion
+            << tx.nLockTime
+            << uint32_t(tx.vin.size())
+            << sequences_hash
+            << uint32_t(tx.vout.size())
+            << outputs_hash
+            << input_index;
         return h.GetSHA256();
     }
 
@@ -251,82 +232,21 @@ https://github.com/JeremyRubin/bitcoin/tree/checktemplateverify.
 ==Design Notes==
 
 The goal of CHECKTEMPLATEVERIFY is to be minimal impact on the existing codebase -- in the
-future, as we become aware of more complex but shown to be safe use cases new template types can be 
+future, as we become aware of more complex but shown to be safe use cases new template types can be
 
 
 Below we'll discuss the rules one-by-one:
 
 
-====Is a NOP if the preceding operation was not a data push of 32 bytes====
 
-CHECKTEMPLATEVERIFY acts as a NOP if the element on the stack wasn't 32 bytes to allow for new
-template upgrades in the future.
+====The StandardTemplateHash of the transaction at the current input index matches the top of the stack====
 
-CHECKTEMPLATEVERIFY is a NOP if the element on the stack wasn't an immediately pushed value,
-because were CHECKTEMPLATEVERIFY to use the data from the stack indiscriminately it would be
-possible to compute in script what data is committed to or pass in via the witness. By forcing the
-hash to be directly from a preceding push in order to not be a NOP, we ensure that the exact
-template is known at the time of creating the transaction output.
-
-Minimalism is partially why CHECKTEMPLATEVERIFY uses a PushData32 (0x20) rather than a
-literal/immediate value by using a new script version. It is messy to upgrade the parser to treat
-old opcodes as multi-byte opcodes. This can be done, perhaps within the context of new script
-versions like Tapscript, depending on community feedback and preference. The other reason is that
-this provides a clean upgrade path for lightening the restriction in the future.
+The set of data committed to is a superset of data which can impact the TXID of the transaction,
+other than the inputs. This ensures that for a given known input, the TXIDs can also be known ahead
+of time.  Otherwise, CHECKTEMPLATEVERIFY would not be usable for Channel Factory type constructions
+as the redemption TXID could be malleated and pre-signed transactions invalidated.
 
 
-A script programmer is still able to conditionalize which hash is checked, e.g., <code>OP_IF
-<H1> OP_CHECKTEMPLATEVERIFY OP_ELSE <H2> OP_CHECKTEMPLATEVERIFY OP_ENDIF</code>. If the conditions
-are nested (e.g. <code> if (a) {if (b){}else{} } else {if (c){} else{}}</code>), with the property
-that a parent branch condition being true implies there is a valid child branch, then it is possible
-to use CHECKTEMPLATEVERIFY to merkelize the condtions into a tree-like program at the transaction
-level to be able to express a O(N) program in log(N) space.
-
-
-In the future, should Taproot become available, a user is more likely to compile code with multiple
-CHECKTEMPLATEVERIFY operations into separate Tapscript branches.
-
-====The SHA256 TaggedHash("StandardTemplateHash") of the serialized version, locktime, outputs hash, sequences hash, number of inputs, and serialized ScriptSig matches the top of the stack==== 
-
-The set of data committed to is the set of data which can impact the TXID of the transaction, other
-than the inputs. This ensures that for a given known input, the TXIDs can also be known ahead of
-time as long as the inputs are SegWit.  Otherwise, CHECKTEMPLATEVERIFY would not be usable for
-Channel Factory type constructions as the redemption TXID could be malleated and pre-signed
-transactions invalidated.
-
-It is not a concern that exposing this hash on the stack might allow parsing of
-the data hashed, because they are already known exactly at the time of script
-construction so could just be compiled in.
-
-=====Committing to the outputs hash=====
-
-This ensures that spending the UTXO is guaranteed to create the exact outputs
-requested.
-
-We commit to the hash rather than the values themselves as this is already
-precomputed for each transaction to optimize SIGHASH_ALL signatures.
-
-=====Committing to the Sequences Hash=====
-
-If we don't commit to the sequences, then the TXID can be malleated. This also allows us to enforce
-a relative sequence lock without an OP_CSV. It is insufficient to just pair CHECKTEMPLATEVERIFY
-with OP_CSV because OP_CSV enforces a minimum nSequence value, not a literal value.
-
-We commit to the hash rather than the values themselves as this is already
-precomputed for each transaction to optimize SIGHASH_ALL signatures.
-
-
-=====Committing to the ScriptSig=====
-
-The scriptsig in a segwit transaction must be exactly empty, unless it is a P2SH
-segwit transaction in which case it must be only the exact redeemscript. P2SH is incompatible
-(unless the P2SH hash is broken) with CHECKTEMPLATEVERIFY because the template hash must commit
-to the  ScriptSig, which must contain the redeemscript, which is a hash cycle.
-
-To prevent succeptibility to malleability when not using a segwit input, we also
-commit to the scriptsig. This makes it possible to use a 2 input CHECKTEMPLATEVERIFY
-with a legacy pre-signed spend, as long as the exact scriptsig for the legacy
-output is committed.
 
 =====Committing to the version and locktime=====
 
@@ -336,6 +256,29 @@ an output arbitrarily as well as possible to change the TXID.
 Committing these values, rather than restricting them to specific values, is
 more flexible as it permits users of CHECKTEMPLATEVERIFY the set the version and
 locktime as they please.
+
+=====Committing to the ScriptSigs Hash=====
+
+The scriptsig in a segwit transaction must be exactly empty, unless it is a P2SH
+segwit transaction in which case it must be only the exact redeemscript. P2SH is incompatible
+(unless the P2SH hash is broken) with CHECKTEMPLATEVERIFY because the template hash must commit
+to the  ScriptSig, which must contain the redeemscript, which is a hash cycle.
+
+To prevent succeptibility to malleability when not using a segwit input, we also commit to the
+scriptsig. This makes it possible to use a 2 input CHECKTEMPLATEVERIFY with a legacy pre-signed
+spend, as long as the exact scriptsig for the legacy output is committed. This is more robust than
+simply disallowing any scriptSig to be set with CHECKTEMPLATEVERIFY.
+
+If no scriptSigs are set in the transaction, there is no purpose in hashing the data or including it
+in the StandardTemplateHash, so we elide it. It is expected to be common that no scriptSigs will be
+set as segwit mandates that the scriptSig must be empty (to avoid malleability).
+
+We commit to the hash rather than the values themselves as this is already
+precomputed for each transaction to optimize SIGHASH_ALL signatures.
+
+Committing to the hash additionally makes it simpler to construct StandardTemplateHashes safely and unambiguously from
+script.
+
 
 =====Committing to the number of inputs=====
 
@@ -350,7 +293,7 @@ need to be signed on all combinations of inputs).
 However, there are legitimate use cases for allowing multiple inputs. For
 example:
 
-Script paths: 
+Script paths:
 
     Path A: <+24 hours> OP_CHECKSEQUENCEVERIFY OP_CHECKTEMPLATEVERIFY <Pay Alice 1 Bitcoin (1 input) nLockTime for +24 hours>
     Path B: OP_CHECKTEMPLATEVERIFY <Pay Bob 2 Bitcoin (2 inputs)>
@@ -367,6 +310,115 @@ spent. In general, using CHECKTEMPLATEVERIFY with more than one input is difficu
 and exposes subtle issues, so multiple inputs should not be used except in
 specific applications.
 
+In principal, committing to the Sequences Hash (below) implicitly commits to the number of inputs,
+making this field strictly redundant. However, separately committing to this number makes it easier
+to construct StandardTemplateHashes from script.
+
+We treat the number of inputs as a `uint32_t` because signature checking code expects nIn to be an
+`unsigned int`, even though in principal a transaction can encode more than a `uint32_t`'s worth of
+inputs.
+
+=====Committing to the Sequences Hash=====
+
+If we don't commit to the sequences, then the TXID can be malleated. This also allows us to enforce
+a relative sequence lock without an OP_CSV. It is insufficient to just pair CHECKTEMPLATEVERIFY
+with OP_CSV because OP_CSV enforces a minimum nSequence value, not a literal value.
+
+We commit to the hash rather than the values themselves as this is already
+precomputed for each transaction to optimize SIGHASH_ALL signatures.
+
+Committing to the hash additionally makes it simpler to construct StandardTemplateHashes safely and unambiguously from
+script.
+
+=====Committing to the Number of Outputs=====
+
+In principal, committing to the Outputs Hash (below) implicitly commits to the number of inputs,
+making this field strictly redundant. However, separately committing to this number makes it easier
+to construct StandardTemplateHashes from script.
+
+We treat the number of outputs as a `uint32_t` because a `COutpoint` index is a `uint32_t`, even
+though in principal a transaction could encode more outputs.
+
+=====Committing to the outputs hash=====
+
+This ensures that spending the UTXO is guaranteed to create the exact outputs
+requested.
+
+We commit to the hash rather than the values themselves as this is already
+precomputed for each transaction to optimize SIGHASH_ALL signatures.
+
+Committing to the hash additionally makes it simpler to construct StandardTemplateHashes safely and unambiguously from
+script.
+
+=====Committing to the current input's index=====
+
+Committing to the currently executing input's index is not strictly needed for anti-malleability,
+however it does restrict the input orderings eliminating a source of malleability for protocol
+designers.
+
+However, committing to the index eliminates key-reuse vulnerability to the half-spend problem. As
+potentially reused CHECKTEMPLATEVERIFY scripts commit to being spent at the same index, they cannot
+be spent at the same index. This makes it safer to design wallet vault contracts without half-spend
+vulnerabilities.
+
+Committing to the current index doesn't prevent one from expressing a CHECKTEMPLATEVERIFY which can
+be spent at multiple indicies. In current script, the CHECKTEMPLATEVERIFY operation can be wrapped
+in an OP_IF for each index (or Tapscript branches in the future). If OP_CAT or OP_SHA256STREAM are
+added to Bitcoin, the index may simply be passed in by the witness before hashing.
+
+=====Committing to Values by Hash=====
+
+Committing to values by hash makes it easier and more efficient to construct a StandardTemplateHash
+from script. Fields which are not intended to be set may be committed to by hash without incurring
+O(n) overhead to re-hash.
+
+Furthermore, if OP_SHA256STREAM is added in the future, it may be possible to write a script which
+allows adding a single output to a list of outputs without incurring O(n) overhead by committing to
+a hash midstate in the script.
+
+
+=====The Ordering of Fields=====
+
+Strictly speaking, the ordering of fields is insignificant. However, with a carefully selected
+order, the efficiency of future scripts (e.g., those using a OP_CAT or OP_SHA256STREAM) may be
+improved.
+
+In particular, the order is selected in order of least likely to change to most.
+
+#nVersion
+#nLockTime
+#scriptSig hash (maybe!)
+#input count
+#sequences hash
+#output count
+#outputs hash
+#input index
+
+Several fields are infrequently modified. nVersion should change infrequently. nLockTime should
+generally be fixed to 0 (in the case of a payment tree, only the *first* lock time is needed to
+prevent fee-sniping the root). scriptSig hash should generally not be set at all.
+
+Since there are many possible sequences hash for a given input count, the input count comes before
+the sequences hash.
+
+Since there are many possible outputs hashes for a given out count, the output count comes before
+the outputs hash.
+
+Since we're generally using a single input to many output design, we're more likely to modify the
+outputs hash than the inputs hash.
+
+We usually have just a single input on a CHECKTEMPLATEVERIFY script, which would suggest that it
+does not make sense for input index to be the last field. However, given the desirability of being
+able to express a "don't care" index easily (e.g., for decentralized kickstarter-type transactions),
+this value is placed last.
+
+As an example, the following code checks an input index argument and concatenates it to the template and
+checks the template matches the transaction.
+
+    OP_SIZE 4 OP_EQUALVERIFY
+    <nVersion || nLockTime || input count || sequences hash || output count || outputs hash>
+    OP_SWAP OP_CAT OP_SHA256 OP_CHECKTEMPLATEVERIFY
+
 ===Design Tradeoffs and Risks===
 Covenants have historically been controversial given their potential for fungibility risks -- coins
 could be minted which have a permanent restriction on how they may or may not be spent or required
@@ -379,10 +431,10 @@ which expand in a finite number of steps. Thus templated transactions are in the
 transactions which create all the inputs directly in this regard..
 
 Furthermore, templates are restricted to be spendable as a known number of inputs only, preventing
-unintentional introduction of the 'half spend' problem. 
+unintentional introduction of the 'half spend' problem.
 
 
-Templates, as restricted as they are, bear some risks.  
+Templates, as restricted as they are, bear some risks.
 
 ====Permanently Unspendable Outputs====
 The preimage argument passed to CHECKTEMPLATEVERIFY may be unknown or otherwise unsatisfiable.
@@ -396,8 +448,9 @@ Key-reuse with CHECKTEMPLATEVERIFY may be used as a form of "forwarding address 
 A forwarding address is an address which can automatically execute in a predefined way.
 For example, a exchange's hot wallet might use an address which can automatically be moved to a cold
 storage address after a relative timeout.
-The issue is that reusing addresses in this way can lead to loss of funds. 
-Suppose one creates an template address which forwards 1 BTC to cold storage. 
+
+The issue is that reusing addresses in this way can lead to loss of funds.
+Suppose one creates an template address which forwards 1 BTC to cold storage.
 Creating an output to this address with less than 1 BTC will be frozen permanently.
 Paying more than 1 BTC will lead to the funds in excess of 1BTC to be paid as a large miner fee.
 CHECKTEMPLATEVERIFY could commit to the exact amount of bitcoin provided by the inputs/amount of fee
@@ -413,6 +466,9 @@ spent to multiple times (e.g., a Hash Time Lock branch should be instantiated wi
 each time it is used). Keys which have signed a SIGHASH_ANYPREVOUT transaction can similarly become
 reuse-unsafe.
 
+Because CHECKTEMPLATEVERIFY commits to the input index currently being spent, reused-keys are
+guaranteed to execute in separate transactions which reduces the risk of "half-spend" type issues.
+
 
 ====NOP-Default and Standardness Rules====
 
@@ -426,19 +482,6 @@ stricter standardness rules to be enforced during consensus. Should that develop
 transaction directly to the network relying on standardness rejection, an standardness-invalid but
 consensus-valid transaction may be caused, leading to a potential loss of funds.
 
-The standardness flags are designed to make it easy for a future soft-fork to lift the previously
-pushed data only requirement.
-
-Alternatively, standardness rules could accept 32 byte arguments on the stack when the hash on the
-stack is equal to the StandardTemplateHash, whether or not it came from a preceding push, even if
-consensus rules won't enforce it.  This permits a future upgrade to broaden the type of template
-hashes verified in consensus easily and maintain compatibility with prior standardness rules. It
-also simplifies the rules for script interpreters that just want to verify standardness rules to not
-need to track the source of the most recent item on the stack. However, the risk of misuse means
-this should not be the default approach taken, and such scripts should be rejected. As a compromise,
-if the non-mandatory flag SCRIPT_VERIFY_STRICT_STANDARD_TEMPLATE is set and the argument is any
-32-byte value, it will be rejected with a SCRIPT_ERR_TEMPLATE_MISMATCH (if it does mismatch)
-rather than a SCRIPT_ERR_DISCOURAGE_UPGRADABLE_NOPS.
 
 ====Feature Redundancy====
 CHECKTEMPLATEVERIFY templates are substantially less risky than other covenant systems. If
